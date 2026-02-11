@@ -43,20 +43,26 @@ def fetch_json(url, retries=2):
     return None
 
 
-def get_protein_name(uniprot_id):
-    """Fetch the recommended protein name from UniProt."""
+def get_protein_info(uniprot_id):
+    """Fetch protein name and sequence length from UniProt.
+    Returns (name, length_in_aa)."""
     data = fetch_json(f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json")
     if not data:
-        return "N/A"
+        return "N/A", "N/A"
+
+    # Protein name
     desc = data.get("proteinDescription", {})
     rec = desc.get("recommendedName")
     if rec:
-        return rec.get("fullName", {}).get("value", "N/A")
-    # Fall back to submittedName for TrEMBL entries
-    sub = desc.get("submissionNames", [{}])
-    if sub:
-        return sub[0].get("fullName", {}).get("value", "N/A")
-    return "N/A"
+        name = rec.get("fullName", {}).get("value", "N/A")
+    else:
+        sub = desc.get("submissionNames", [{}])
+        name = sub[0].get("fullName", {}).get("value", "N/A") if sub else "N/A"
+
+    # Sequence length
+    length = data.get("sequence", {}).get("length", "N/A")
+
+    return name, length
 
 
 def get_alphafold_plddt(uniprot_id):
@@ -177,6 +183,7 @@ def main():
         "Original ID",
         "UniProt Accession",
         "Protein Name",
+        "Size (AA)",
         "AlphaFold Entry",
         "Avg pLDDT",
         "pLDDT Category",
@@ -188,7 +195,7 @@ def main():
         uniprot_id = strip_isoform(raw_id)
         print(f"[{idx}/{len(raw_ids)}] {raw_id} -> {uniprot_id} ... ", end="", flush=True)
 
-        protein_name = get_protein_name(uniprot_id)
+        protein_name, protein_length = get_protein_info(uniprot_id)
         af_entry, avg_plddt = get_alphafold_plddt(uniprot_id)
         pdb_ids = check_pdb_exists(uniprot_id)
 
@@ -214,13 +221,14 @@ def main():
             raw_id,
             uniprot_id,
             protein_name,
+            protein_length,
             af_entry or "Not found",
             plddt_display,
             category,
             has_pdb,
             pdb_str,
         ])
-        print(f"{protein_name}  pLDDT={plddt_display}  PDB={'Yes' if pdb_ids else 'No'}")
+        print(f"{protein_name} ({protein_length} AA)  pLDDT={plddt_display}  PDB={'Yes' if pdb_ids else 'No'}")
 
     wb_out.save(args.output)
     print(f"\nResults saved to {args.output}")
