@@ -121,7 +121,7 @@ def check_pdb_exists(uniprot_id):
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
         return []
     return [hit["identifier"] for hit in data.get("result_set", [])]
 
