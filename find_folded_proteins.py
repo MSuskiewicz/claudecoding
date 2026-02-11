@@ -15,6 +15,17 @@ import urllib.request
 from openpyxl import Workbook, load_workbook
 
 
+UNIPROT_RE = re.compile(
+    r"^[OPQ][0-9][A-Z0-9]{3}[0-9](?:-\d+)?$"    # UniProtKB accession
+    r"|^[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}(?:-\d+)?$"  # longer accessions
+)
+
+
+def is_uniprot_id(value):
+    """Check if a string looks like a UniProt/TrEMBL accession."""
+    return bool(UNIPROT_RE.match(value.strip()))
+
+
 def strip_isoform(accession):
     """Remove isoform suffix (e.g. P12345-2 -> P12345)."""
     return re.sub(r"-\d+$", "", accession.strip())
@@ -26,7 +37,7 @@ def fetch_json(url, retries=2):
         try:
             with urllib.request.urlopen(url, timeout=30) as resp:
                 return json.loads(resp.read())
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
             if attempt < retries:
                 time.sleep(1)
     return None
@@ -132,22 +143,31 @@ def main():
     wb_in = load_workbook(args.input, read_only=True)
     ws_in = wb_in[args.sheet] if args.sheet else wb_in.active
 
-    # Collect UniProt IDs from column A
-    raw_ids = []
+    # Collect UniProt IDs from column A, skipping non-accession rows
+    all_values = []
     for row in ws_in.iter_rows(min_col=1, max_col=1, values_only=True):
         val = row[0]
         if val is not None:
-            raw_ids.append(str(val).strip())
+            all_values.append(str(val).strip())
     wb_in.close()
 
-    if args.skip_header and raw_ids:
-        raw_ids = raw_ids[1:]
+    if args.skip_header and all_values:
+        all_values = all_values[1:]
+
+    raw_ids = []
+    skipped = 0
+    for val in all_values:
+        if is_uniprot_id(val):
+            raw_ids.append(val)
+        else:
+            skipped += 1
 
     if not raw_ids:
-        print("No IDs found in the input file.", file=sys.stderr)
+        print("No valid UniProt IDs found in the input file.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Read {len(raw_ids)} entries from {args.input}")
+    print(f"Found {len(raw_ids)} valid UniProt IDs from {args.input}"
+          f" ({skipped} non-ID rows skipped)")
 
     # Prepare output
     wb_out = Workbook()
