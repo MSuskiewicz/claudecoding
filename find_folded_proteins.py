@@ -32,6 +32,22 @@ def fetch_json(url, retries=2):
     return None
 
 
+def get_protein_name(uniprot_id):
+    """Fetch the recommended protein name from UniProt."""
+    data = fetch_json(f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json")
+    if not data:
+        return "N/A"
+    desc = data.get("proteinDescription", {})
+    rec = desc.get("recommendedName")
+    if rec:
+        return rec.get("fullName", {}).get("value", "N/A")
+    # Fall back to submittedName for TrEMBL entries
+    sub = desc.get("submissionNames", [{}])
+    if sub:
+        return sub[0].get("fullName", {}).get("value", "N/A")
+    return "N/A"
+
+
 def get_alphafold_plddt(uniprot_id):
     """Download the AlphaFold PDB file and compute average pLDDT from B-factors of CA atoms."""
     meta = fetch_json(f"https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}")
@@ -140,6 +156,7 @@ def main():
     ws_out.append([
         "Original ID",
         "UniProt Accession",
+        "Protein Name",
         "AlphaFold Entry",
         "Avg pLDDT",
         "pLDDT Category",
@@ -151,6 +168,7 @@ def main():
         uniprot_id = strip_isoform(raw_id)
         print(f"[{idx}/{len(raw_ids)}] {raw_id} -> {uniprot_id} ... ", end="", flush=True)
 
+        protein_name = get_protein_name(uniprot_id)
         af_entry, avg_plddt = get_alphafold_plddt(uniprot_id)
         pdb_ids = check_pdb_exists(uniprot_id)
 
@@ -175,13 +193,14 @@ def main():
         ws_out.append([
             raw_id,
             uniprot_id,
+            protein_name,
             af_entry or "Not found",
             plddt_display,
             category,
             has_pdb,
             pdb_str,
         ])
-        print(f"pLDDT={plddt_display}  PDB={'Yes' if pdb_ids else 'No'}")
+        print(f"{protein_name}  pLDDT={plddt_display}  PDB={'Yes' if pdb_ids else 'No'}")
 
     wb_out.save(args.output)
     print(f"\nResults saved to {args.output}")
