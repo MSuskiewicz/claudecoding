@@ -4,27 +4,28 @@ PARP1 Automodification Domain (AD) Comparison Script
 =====================================================
 Fetches ~100 representative PARP1 sequences (>900 aa) from selected phyla
 (Chordata, Echinodermata, Cnidaria, Porifera and related — excluding
-Arthropoda, Nematoda, Annelida, Mollusca), aligns them with MAFFT, extracts
+Arthropoda, Nematoda, Annelida, Mollusca), aligns them, extracts
 the region homologous to human PARP1 residues 481-526, and generates a
 sequence logo.
 
+Alignment: uses MAFFT if installed, otherwise falls back to the EBI
+Clustal Omega web service (requires internet, no installation needed).
+
 Requirements:
-    pip install biopython logomaker matplotlib numpy pandas
-    apt install mafft   (or conda install -c bioconda mafft)
+    pip install biopython logomaker matplotlib numpy pandas requests
 
 Usage:
     python parp1_ad_comparison.py [output_dir]
 """
 
-import os, sys, time, re, textwrap, subprocess, tempfile
+import os, sys, time, re, shutil, subprocess
 from io import StringIO
-from collections import Counter
 
-from Bio import Entrez, SeqIO, SearchIO
+from Bio import Entrez, SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.Blast import NCBIWWW, NCBIXML
-from Bio.Align.Applications import MafftCommandline
+import requests
 
 import numpy as np
 import pandas as pd
@@ -245,24 +246,20 @@ def select_representatives(records, target_n):
     return selected
 
 
-def run_mafft(records, outdir):
-    """Run MAFFT multiple sequence alignment."""
+def prepare_input_fasta(records, outdir):
+    """Write records with short, unique IDs suitable for alignment tools."""
     input_fasta = os.path.join(outdir, "parp1_sequences.fasta")
-    output_aln  = os.path.join(outdir, "parp1_alignment.fasta")
 
-    # Make sequence IDs short and unique for MAFFT
     clean_records = []
     seen_ids = set()
     for i, rec in enumerate(records):
         m = re.search(r'\[([^\]]+)\]', rec.description)
         species = m.group(1) if m else f"seq_{i}"
-        # Create a short, unique ID
         parts = species.split()
         if len(parts) >= 2:
             short_id = f"{parts[0][:3]}_{parts[1][:6]}".replace(".", "")
         else:
             short_id = species[:10].replace(" ", "_")
-        # Ensure uniqueness
         base_id = short_id
         counter = 1
         while short_id in seen_ids:
@@ -273,15 +270,71 @@ def run_mafft(records, outdir):
 
     SeqIO.write(clean_records, input_fasta, "fasta")
     print(f"Wrote {len(clean_records)} sequences to {input_fasta}")
+    return input_fasta, clean_records
 
+
+def run_mafft(input_fasta, output_aln):
+    """Try to run MAFFT locally. Returns True on success, False if not installed."""
+    if not shutil.which("mafft"):
+        return False
     print("Running MAFFT alignment (this may take a few minutes)...")
     cmd = ["mafft", "--auto", "--thread", "-1", input_fasta]
     with open(output_aln, "w") as out_f:
         result = subprocess.run(cmd, stdout=out_f, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
-        print(f"  MAFFT stderr: {result.stderr[:500]}")
-        raise RuntimeError("MAFFT alignment failed")
+        print(f"  MAFFT failed: {result.stderr[:300]}")
+        return False
     print(f"  Alignment saved to {output_aln}")
+    return True
+
+
+def run_clustalo_ebi(input_fasta, output_aln):
+    """Align sequences using the EBI Clustal Omega REST API (no local install)."""
+    EBI_RUN  = "https://www.ebi.ac.uk/Tools/services/rest/clustalo/run"
+    EBI_STAT = "https://www.ebi.ac.uk/Tools/services/rest/clustalo/status/{}"
+    EBI_RES  = "https://www.ebi.ac.uk/Tools/services/rest/clustalo/result/{}/aln-fasta"
+
+    with open(input_fasta) as f:
+        fasta_text = f.read()
+
+    print("Submitting alignment job to EBI Clustal Omega web service...")
+    resp = requests.post(EBI_RUN, data={
+        "email":    Entrez.email,
+        "sequence": fasta_text,
+        "outfmt":   "fa",
+    })
+    resp.raise_for_status()
+    job_id = resp.text.strip()
+    print(f"  Job ID: {job_id}")
+
+    # Poll for completion
+    while True:
+        time.sleep(10)
+        status = requests.get(EBI_STAT.format(job_id)).text.strip()
+        if status == "FINISHED":
+            break
+        elif status == "FAILURE" or status == "ERROR":
+            raise RuntimeError(f"EBI Clustal Omega job failed with status: {status}")
+        print(f"  Status: {status} — waiting...")
+
+    # Download result
+    result = requests.get(EBI_RES.format(job_id))
+    result.raise_for_status()
+    with open(output_aln, "w") as f:
+        f.write(result.text)
+    print(f"  Alignment saved to {output_aln}")
+
+
+def align_sequences(records, outdir):
+    """Align sequences using MAFFT (local) or EBI Clustal Omega (web fallback)."""
+    input_fasta, clean_records = prepare_input_fasta(records, outdir)
+    output_aln = os.path.join(outdir, "parp1_alignment.fasta")
+
+    if run_mafft(input_fasta, output_aln):
+        return output_aln
+
+    print("  MAFFT not found locally, falling back to EBI Clustal Omega web service...")
+    run_clustalo_ebi(input_fasta, output_aln)
     return output_aln
 
 
@@ -435,7 +488,7 @@ def main():
 
     # Step 7: Multiple sequence alignment
     print(f"\nAligning {len(representatives)} sequences...")
-    aln_file = run_mafft(representatives, outdir)
+    aln_file = align_sequences(representatives, outdir)
 
     # Step 8: Extract AD region (human PARP1 481-526)
     print(f"\nExtracting AD region (human PARP1 positions {AD_START}-{AD_END})...")
