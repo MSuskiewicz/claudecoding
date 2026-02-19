@@ -79,10 +79,11 @@ def fetch_human_parp1():
 def build_entrez_query():
     """Build an NCBI Entrez query for PARP1 orthologs in target taxa."""
     gene_terms = (
-        '("poly ADP-ribose polymerase 1"[Protein Name] OR '
-        'PARP1[Gene Name] OR PARP-1[Gene Name] OR '
-        '"poly(ADP-ribose) polymerase 1"[Protein Name] OR '
-        'ADPRT[Gene Name] OR ADPRT1[Gene Name])'
+        '(PARP1[Gene Name] OR PARP-1[Gene Name] OR '
+        'ADPRT[Gene Name] OR ADPRT1[Gene Name] OR '
+        '"poly(ADP-ribose) polymerase 1"[Title] OR '
+        '"poly ADP-ribose polymerase 1"[Title] OR '
+        'PARP1[Title])'
     )
     include = " OR ".join(f"txid{t}[Organism:exp]" for t in INCLUDE_TAXA)
     exclude = " AND ".join(f"NOT txid{t}[Organism:exp]" for t in EXCLUDE_TAXA)
@@ -135,33 +136,37 @@ def download_sequences(search_results):
 def blast_for_more(human_seq, existing_ids):
     """Use BLASTP to find additional PARP1 orthologs if Entrez search was insufficient."""
     print("Running BLASTP to find additional orthologs (this may take several minutes)...")
-
-    include_str = " OR ".join(f"txid{t}[ORGN]" for t in INCLUDE_TAXA)
-    exclude_str = " AND ".join(f"NOT txid{t}[ORGN]" for t in EXCLUDE_TAXA)
-    entrez_query = f"({include_str}) AND {exclude_str}"
-
-    result_handle = NCBIWWW.qblast(
-        "blastp", "nr", human_seq.seq,
-        entrez_query=entrez_query,
-        hitlist_size=300,
-        expect=1e-10,
-    )
-    blast_records = NCBIXML.parse(result_handle)
-    blast_record = next(blast_records)
-    result_handle.close()
+    print("  One BLAST search per target phylum — please be patient...")
 
     new_ids = []
-    for alignment in blast_record.alignments:
-        acc = alignment.accession
-        if acc not in existing_ids:
-            # Check length from hit info
-            for hsp in alignment.hsps:
-                if hsp.sbjct_end - hsp.sbjct_start + 1 > MIN_LENGTH * 0.5:
-                    new_ids.append(acc)
-                    break
+    for taxid in INCLUDE_TAXA:
+        entrez_query = f"txid{taxid}[ORGN]"
+        print(f"  BLASTing against taxid {taxid}...")
+        try:
+            result_handle = NCBIWWW.qblast(
+                "blastp", "nr", human_seq.seq,
+                entrez_query=entrez_query,
+                hitlist_size=200,
+                expect=1e-10,
+            )
+            blast_records = NCBIXML.parse(result_handle)
+            blast_record = next(blast_records)
+            result_handle.close()
 
-    print(f"  BLAST found {len(new_ids)} additional candidate accessions")
-    return new_ids[:200]
+            for alignment in blast_record.alignments:
+                acc = alignment.accession
+                if acc not in existing_ids and acc not in new_ids:
+                    for hsp in alignment.hsps:
+                        if hsp.sbjct_end - hsp.sbjct_start + 1 > MIN_LENGTH * 0.5:
+                            new_ids.append(acc)
+                            break
+            print(f"    Found {len(new_ids)} candidates so far")
+        except Exception as e:
+            print(f"    BLAST for taxid {taxid} failed: {e}")
+        time.sleep(3)  # Be polite to NCBI
+
+    print(f"  BLAST found {len(new_ids)} additional candidate accessions total")
+    return new_ids[:300]
 
 
 def fetch_by_ids(id_list):
@@ -466,8 +471,12 @@ def main():
     total_found = int(search_results["Count"])
 
     # Step 3: Download sequences
-    all_records = download_sequences(search_results)
-    print(f"  Downloaded {len(all_records)} sequences total")
+    if total_found > 0:
+        all_records = download_sequences(search_results)
+        print(f"  Downloaded {len(all_records)} sequences total")
+    else:
+        all_records = []
+        print("  No Entrez results — will rely on BLAST")
 
     # Step 4: If we didn't get enough, try BLAST
     if len(all_records) < TARGET_COUNT:
