@@ -146,7 +146,7 @@ def plot_distribution(concentrations, Ctotal, Kd, Nmax, yaxis, outfile):
 # ── Excel interactive calculator ─────────────────────────────────────────────
 
 # Fixed table rows for up to MAX_N mers in the Excel sheet
-_MAX_N = 20   # supports up to 20-mer in the spreadsheet
+_MAX_N = 100  # supports up to 100-mer in the spreadsheet
 
 # Row indices (1-based, as openpyxl uses)
 _R_TITLE   = 1
@@ -457,7 +457,7 @@ def main():
     if args.Nmax < 2:
         sys.exit("--Nmax must be >= 2.")
     if args.Nmax > _MAX_N:
-        sys.exit(f"--Nmax must be <= {_MAX_N} (Excel sheet limit).")
+        sys.exit(f"--Nmax must be <= {_MAX_N}.")
 
     print(f"Parameters: Kd = {args.Kd} µM, C_total = {args.Ctotal} µM, Nmax = {args.Nmax}")
 
