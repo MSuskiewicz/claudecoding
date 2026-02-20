@@ -235,7 +235,7 @@ def create_excel_calculator(m1, Kd, Ctotal, Nmax, outfile):
     params = [
         (_R_KD,    "Kd (µM)",              Kd,    y_fill, "Dissociation constant (µM) — change freely"),
         (_R_CTOTAL,"C_total (µM)",          Ctotal,y_fill, "Total protein concentration (µM) — change freely"),
-        (_R_NMAX,  "Max n-mer (Nmax)",      Nmax,  y_fill, "Largest oligomer shown (2 – 20)"),
+        (_R_NMAX,  "Max n-mer (Nmax)",      Nmax,  y_fill, f"Largest oligomer shown (2 – {_MAX_N})"),
         (_R_A1,    "Free monomer [A1] (µM)",m1,    o_fill, "← solve via Goal Seek (see instructions)"),
     ]
     for row, label, value, fill, note in params:
